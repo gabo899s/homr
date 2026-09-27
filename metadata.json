@@ -1,0 +1,7 @@
+{
+  "name": "HOMR - Optical Music Recognition",
+  "description": "Upload sheet music images, convert them into MusicXML with HOMR, and display interactive musical staves live with OpenSheetMusicDisplay.",
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

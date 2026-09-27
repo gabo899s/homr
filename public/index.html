@@ -1,0 +1,1177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>HOMR + OpenSheetMusicDisplay</title>
+  <meta name="description" content="Reconocimiento óptico de partituras (HOMR) y renderizado interactivo de pentagramas en vivo con OpenSheetMusicDisplay." />
+  <meta property="og:title" content="HOMR + OpenSheetMusicDisplay" />
+  <meta property="og:description" content="Reconocimiento óptico de partituras y visualización interactiva de pentagramas en vivo." />
+
+  <!-- Cargar OpenSheetMusicDisplay directamente desde el bundle servido localmente -->
+  <script src="/osmd/opensheetmusicdisplay.min.js"></script>
+
+  <!-- Cargar Tone.js para síntesis y reproducción de audio interactivo -->
+  <script src="/tone/Tone.js"></script>
+
+  <style>
+    :root {
+      --ink: #1c1b19;
+      --muted: #5c5852;
+      --line: #d8d2c8;
+      --bg: #f7f4ef;
+      --accent: #0f5c4c;
+      --accent-hover: #0a463a;
+      --accent-soft: rgba(15, 92, 76, 0.08);
+      --danger: #8b2e2e;
+      --surface: #ffffff;
+      --card-bg: #ffffff;
+      --tag-bg: #e8efe9;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+      color: var(--ink);
+      background:
+        radial-gradient(ellipse 80% 50% at 10% 0%, #e8efe9 0%, transparent 55%),
+        radial-gradient(ellipse 60% 40% at 100% 100%, #efe6d8 0%, transparent 50%),
+        var(--bg);
+      padding: 2rem 1.2rem 4rem;
+      display: flex;
+      justify-content: center;
+    }
+    .app-container {
+      width: min(72rem, 100%);
+      display: flex;
+      flex-direction: column;
+      gap: 1.75rem;
+    }
+    header {
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 1.25rem;
+    }
+    .header-top {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 0.75rem;
+    }
+    h1 {
+      margin: 0;
+      font-size: clamp(2rem, 5vw, 2.8rem);
+      letter-spacing: 0.03em;
+      font-weight: 700;
+      line-height: 1.1;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .tagline {
+      margin: 0.35rem 0 0;
+      color: var(--muted);
+      font-size: 1.05rem;
+      line-height: 1.4;
+    }
+    .badge-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin-top: 0.75rem;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      font-size: 0.8rem;
+      background: var(--accent-soft);
+      color: var(--accent);
+      padding: 0.2rem 0.6rem;
+      border: 1px solid rgba(15, 92, 76, 0.25);
+      border-radius: 2px;
+      font-family: ui-sans-serif, system-ui, sans-serif;
+      font-weight: 500;
+    }
+    .badge.osmd {
+      background: #eef2ff;
+      color: #3730a3;
+      border-color: #c7d2fe;
+    }
+
+    /* Grid Layout: Controls / Upload on Left/Top, Live Pentagram on Right/Main */
+    .workspace-grid {
+      display: grid;
+      grid-template-columns: minmax(280px, 360px) 1fr;
+      gap: 1.5rem;
+      align-items: start;
+    }
+    @media (max-width: 860px) {
+      .workspace-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .panel-card {
+      background: var(--card-bg);
+      border: 1px solid var(--line);
+      box-shadow: 0 4px 16px rgba(0,0,0,0.03);
+      padding: 1.25rem;
+    }
+
+    .panel-title {
+      font-size: 1.15rem;
+      font-weight: 700;
+      margin: 0 0 0.85rem;
+      border-bottom: 1px solid #ebe5dc;
+      padding-bottom: 0.5rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    /* Upload zone */
+    label.file {
+      display: block;
+      border: 2px dashed var(--line);
+      background: rgba(255, 255, 255, 0.7);
+      padding: 1.5rem 1rem;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      text-align: center;
+    }
+    label.file:hover, label.file.dragover {
+      border-color: var(--accent);
+      background: #fafaf8;
+    }
+    label.file span.file-name {
+      display: block;
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: var(--ink);
+      word-break: break-all;
+    }
+    .file-hint {
+      display: block;
+      margin-top: 0.35rem;
+      font-size: 0.82rem;
+      color: var(--muted);
+      font-family: ui-sans-serif, system-ui, sans-serif;
+    }
+    input[type="file"] { display: none; }
+
+    .sample-sheet-preview {
+      display: none;
+      margin-top: 0.75rem;
+      text-align: center;
+      border: 1px solid var(--line);
+      background: #faf8f5;
+      padding: 0.5rem;
+      max-height: 140px;
+      overflow: hidden;
+    }
+    .sample-sheet-preview img {
+      max-width: 100%;
+      height: 120px;
+      object-fit: contain;
+    }
+
+    .btn-row {
+      display: flex;
+      gap: 0.5rem;
+      margin-top: 0.85rem;
+    }
+    button {
+      appearance: none;
+      border: 0;
+      background: var(--accent);
+      color: #f7f4ef;
+      font: inherit;
+      font-size: 1rem;
+      font-weight: 600;
+      padding: 0.75rem 1rem;
+      cursor: pointer;
+      transition: background 0.15s ease, opacity 0.15s ease;
+      flex: 1;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.35rem;
+    }
+    button:hover:not(:disabled) { background: var(--accent-hover); }
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    button.secondary {
+      background: transparent;
+      color: var(--accent);
+      border: 1px solid var(--accent);
+      flex: none;
+      font-size: 0.9rem;
+      padding: 0.75rem 0.85rem;
+    }
+    button.secondary:hover:not(:disabled) {
+      background: var(--accent-soft);
+    }
+    button.small {
+      font-size: 0.82rem;
+      padding: 0.4rem 0.65rem;
+      font-family: ui-sans-serif, system-ui, sans-serif;
+    }
+
+    #status {
+      min-height: 1.4rem;
+      margin-top: 0.75rem;
+      font-size: 0.92rem;
+      color: var(--muted);
+      line-height: 1.4;
+      font-family: ui-sans-serif, system-ui, sans-serif;
+    }
+    #status.error { color: var(--danger); font-weight: 600; }
+    #status.success { color: var(--accent); font-weight: 600; }
+
+    /* OpenSheetMusicDisplay Viewport */
+    .score-panel {
+      display: flex;
+      flex-direction: column;
+    }
+    .score-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      background: #faf8f5;
+      border: 1px solid var(--line);
+      border-bottom: 0;
+      padding: 0.6rem 0.9rem;
+    }
+    .score-title-info {
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: var(--ink);
+    }
+    .score-controls {
+      display: flex;
+      align-items: center;
+      gap: 0.45rem;
+      flex-wrap: wrap;
+    }
+    .playback-controls {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      background: #ffffff;
+      border: 1px solid var(--line);
+      padding: 0.25rem 0.5rem;
+      border-radius: 4px;
+    }
+    .playback-controls button.play-btn {
+      background: var(--accent);
+      color: #ffffff;
+      border-color: var(--accent);
+      font-weight: 600;
+    }
+    .playback-controls button.play-btn:hover:not(:disabled) {
+      background: var(--accent-hover);
+    }
+    .playback-controls button.stop-btn {
+      background: #8b2e2e;
+      color: #ffffff;
+      border-color: #8b2e2e;
+    }
+    .playback-controls button.stop-btn:hover:not(:disabled) {
+      background: #6e2424;
+    }
+    .instrument-select, .tempo-input {
+      font-family: ui-sans-serif, system-ui, sans-serif;
+      font-size: 0.82rem;
+      padding: 0.35rem 0.45rem;
+      border: 1px solid var(--line);
+      background: #ffffff;
+      color: var(--ink);
+      border-radius: 3px;
+    }
+    .tempo-input {
+      width: 58px;
+    }
+    .zoom-label {
+      font-size: 0.82rem;
+      font-family: ui-sans-serif, system-ui, sans-serif;
+      color: var(--muted);
+    }
+
+    #osmd-container {
+      width: 100%;
+      min-height: 480px;
+      max-height: 780px;
+      overflow-y: auto;
+      overflow-x: auto;
+      background: #ffffff;
+      border: 1px solid var(--line);
+      padding: 1.5rem 1rem;
+      box-shadow: inset 0 2px 6px rgba(0,0,0,0.03);
+      position: relative;
+    }
+    #osmd-placeholder {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 400px;
+      color: #8c867e;
+      text-align: center;
+      gap: 0.75rem;
+    }
+    #osmd-placeholder svg {
+      width: 56px;
+      height: 56px;
+      opacity: 0.4;
+    }
+
+    /* MusicXML Code Drawer / Inspection */
+    .xml-details {
+      margin-top: 1rem;
+      border-top: 1px solid var(--line);
+      padding-top: 0.75rem;
+    }
+    details summary {
+      cursor: pointer;
+      font-size: 0.88rem;
+      font-weight: 600;
+      color: var(--muted);
+      user-select: none;
+    }
+    details summary:hover {
+      color: var(--accent);
+    }
+    pre.code-view {
+      margin-top: 0.5rem;
+      max-height: 180px;
+      overflow: auto;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.75rem;
+      line-height: 1.4;
+      background: #faf8f5;
+      padding: 0.75rem;
+      border: 1px solid #ebe5dc;
+      color: #383531;
+      white-space: pre;
+    }
+
+    footer {
+      border-top: 1px solid var(--line);
+      padding-top: 1rem;
+      font-size: 0.85rem;
+      color: var(--muted);
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      gap: 1rem;
+      align-items: center;
+      font-family: ui-sans-serif, system-ui, sans-serif;
+    }
+    footer a {
+      color: var(--accent);
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+  <div class="app-container">
+    <header>
+      <div class="header-top">
+        <h1>
+          <span>HOMR</span>
+          <span style="font-weight: 300; font-size: 0.7em; color: var(--muted);">&times;</span>
+          <span style="color: var(--accent);">OpenSheetMusicDisplay</span>
+        </h1>
+      </div>
+      <p class="tagline">
+        Reconocimiento óptico de partituras (OMR) y renderizado musical interactivo en SVG con VexFlow &amp; OSMD.
+      </p>
+      <div class="badge-bar">
+        <span class="badge">HOMR MusicXML 4.0</span>
+        <span class="badge osmd">OpenSheetMusicDisplay v2.1.3</span>
+        <span class="badge" style="background: #eef2ff; color: #3730a3; border: 1px solid #c7d2fe;">Tone.js Audio Synthesis</span>
+        <span class="badge">VexFlow Render Engine</span>
+        <span class="badge">Interactive Cursor &amp; Sound</span>
+      </div>
+    </header>
+
+    <div class="workspace-grid">
+      <!-- Left column: Upload & Conversion Form -->
+      <section class="panel-card">
+        <h2 class="panel-title">
+          <span>1. Subir Partitura</span>
+          <span style="font-size: 0.8rem; font-weight: normal; color: var(--muted);">HOMR</span>
+        </h2>
+        <form id="form">
+          <label class="file" id="drop-zone">
+            <input id="file" type="file" accept=".jpg,.jpeg,.png,image/jpeg,image/png,.svg" required />
+            <span class="file-name" id="filename">Elige una imagen JPG / PNG o arrástrala aquí</span>
+            <span class="file-hint">Fotos de partituras, escaneos o imágenes de compases</span>
+          </label>
+
+          <div class="sample-sheet-preview" id="image-preview-container">
+            <img id="image-preview" alt="Vista previa de partitura original" />
+          </div>
+
+          <div class="btn-row">
+            <button id="submit" type="submit">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              Reconocer y Renderizar
+            </button>
+            <button type="button" class="secondary" id="sample-btn" title="Cargar partitura de prueba tabi">
+              Partitura Demo
+            </button>
+          </div>
+        </form>
+
+        <div id="status" aria-live="polite"></div>
+
+        <div class="xml-details">
+          <details id="xml-details">
+            <summary>Ver código MusicXML generado</summary>
+            <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem;">
+              <button type="button" class="secondary small" id="copy-btn">Copiar XML</button>
+              <button type="button" class="secondary small" id="download-btn">Descargar .musicxml</button>
+            </div>
+            <pre class="code-view" id="musicxml-code">&lt;!-- El MusicXML generado aparecerá aquí --&gt;</pre>
+          </details>
+        </div>
+      </section>
+
+      <!-- Right column: Pentagram rendering with OpenSheetMusicDisplay -->
+      <section class="score-panel panel-card" style="padding: 0; overflow: hidden;">
+        <div class="score-toolbar">
+          <div class="score-title-info" id="score-title-text">
+            <span>2. Pentagrama Renderizado (OSMD)</span>
+          </div>
+          <div class="score-controls">
+            <!-- Tone.js Audio Controls -->
+            <div class="playback-controls">
+              <button type="button" class="small play-btn" id="play-btn" title="Reproducir música con Tone.js" disabled>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                <span>Play</span>
+              </button>
+              <button type="button" class="small stop-btn" id="stop-btn" title="Detener reproducción" disabled>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16"/></svg>
+                <span>Stop</span>
+              </button>
+              <select id="synth-select" class="instrument-select" title="Timbre de síntesis Tone.js">
+                <option value="piano">Piano / PolySynth</option>
+                <option value="synth">Sintetizador Suave</option>
+                <option value="am">AMSynth</option>
+                <option value="fm">FMSynth</option>
+              </select>
+              <label class="zoom-label" style="margin-left: 2px;">BPM:</label>
+              <input type="number" id="tempo-input" class="tempo-input" value="100" min="40" max="240" step="5" title="Tempo en pulsos por minuto" />
+            </div>
+
+            <span class="zoom-label" style="margin-left: 6px;">Zoom:</span>
+            <button type="button" class="secondary small" id="zoom-out-btn" title="Disminuir zoom">-</button>
+            <button type="button" class="secondary small" id="zoom-reset-btn" title="Restablecer zoom">100%</button>
+            <button type="button" class="secondary small" id="zoom-in-btn" title="Aumentar zoom">+</button>
+            <button type="button" class="secondary small" id="cursor-btn" title="Activar/ocultar cursor de reproducción">Cursor</button>
+          </div>
+        </div>
+
+        <div id="osmd-container">
+          <div id="osmd-placeholder">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M9 18V5l12-2v13"></path>
+              <circle cx="6" cy="18" r="3"></circle>
+              <circle cx="18" cy="16" r="3"></circle>
+            </svg>
+            <p><strong>El pentagrama interactivo se mostrará aquí.</strong><br/>
+            Sube una imagen o pulsa <em>"Partitura Demo"</em> para ver el MusicXML renderizado al instante con OpenSheetMusicDisplay.</p>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <footer>
+      <span>HOMR transcribe imágenes musicales a MusicXML 4.0</span>
+      <span>Renderizado vectorial por <a href="https://github.com/opensheetmusicdisplay/opensheetmusicdisplay" target="_blank" rel="noopener">OpenSheetMusicDisplay</a> en el navegador</span>
+    </footer>
+  </div>
+
+  <script>
+    // Elements
+    const form = document.getElementById("form");
+    const fileInput = document.getElementById("file");
+    const filename = document.getElementById("filename");
+    const dropZone = document.getElementById("drop-zone");
+    const submit = document.getElementById("submit");
+    const sampleBtn = document.getElementById("sample-btn");
+    const status = document.getElementById("status");
+    const previewContainer = document.getElementById("image-preview-container");
+    const imagePreview = document.getElementById("image-preview");
+    const musicxmlCode = document.getElementById("musicxml-code");
+    const copyBtn = document.getElementById("copy-btn");
+    const downloadBtn = document.getElementById("download-btn");
+    const osmdContainer = document.getElementById("osmd-container");
+    const osmdPlaceholder = document.getElementById("osmd-placeholder");
+    const scoreTitleText = document.getElementById("score-title-text");
+    const zoomInBtn = document.getElementById("zoom-in-btn");
+    const zoomOutBtn = document.getElementById("zoom-out-btn");
+    const zoomResetBtn = document.getElementById("zoom-reset-btn");
+    const cursorBtn = document.getElementById("cursor-btn");
+    const playBtn = document.getElementById("play-btn");
+    const stopBtn = document.getElementById("stop-btn");
+    const synthSelect = document.getElementById("synth-select");
+    const tempoInput = document.getElementById("tempo-input");
+
+    let lastXmlText = "";
+    let lastDownloadName = "homr.musicxml";
+    let osmdInstance = null;
+    let currentZoom = 0.9;
+    let isCursorVisible = false;
+
+    // Tone.js audio state & synthesizers
+    let activeSynth = null;
+    let activeSynthType = "piano";
+    let playbackPart = null;
+    let isPlaying = false;
+    let scheduledEvents = [];
+    let playbackTimeouts = [];
+
+    // Initialize or get Tone.js Polyphonic Synth with pleasant, gentle acoustic musical tones
+    function getToneSynth(type = "piano") {
+      if (typeof Tone === "undefined") {
+        console.warn("Tone.js is not loaded.");
+        return null;
+      }
+
+      if (activeSynth && activeSynthType === type) {
+        return activeSynth;
+      }
+
+      if (activeSynth) {
+        try {
+          activeSynth.releaseAll();
+          activeSynth.dispose();
+        } catch (_) {}
+        activeSynth = null;
+      }
+
+      activeSynthType = type;
+
+      try {
+        if (type === "piano") {
+          // Warm, gentle acoustic electric piano / bell synth
+          activeSynth = new Tone.PolySynth(Tone.Synth, {
+            maxPolyphony: 8,
+            oscillator: { type: "sine" },
+            envelope: {
+              attack: 0.015,
+              decay: 0.8,
+              sustain: 0.15,
+              release: 0.8
+            }
+          }).toDestination();
+          activeSynth.volume.value = -8; // Comfortable listening level, prevents harsh clipping
+        } else if (type === "synth") {
+          // Gentle warm pad synthesizer
+          activeSynth = new Tone.PolySynth(Tone.Synth, {
+            maxPolyphony: 8,
+            oscillator: { type: "triangle" },
+            envelope: {
+              attack: 0.03,
+              decay: 0.6,
+              sustain: 0.25,
+              release: 0.7
+            }
+          }).toDestination();
+          activeSynth.volume.value = -9;
+        } else if (type === "am") {
+          // Smooth flute/reed AM synth
+          activeSynth = new Tone.PolySynth(Tone.AMSynth, {
+            maxPolyphony: 6,
+            harmonicity: 1.5,
+            oscillator: { type: "sine" },
+            envelope: { attack: 0.04, decay: 0.5, sustain: 0.2, release: 0.6 },
+            modulation: { type: "sine" },
+            modulationEnvelope: { attack: 0.05, decay: 0.2, sustain: 0.1, release: 0.4 }
+          }).toDestination();
+          activeSynth.volume.value = -10;
+        } else if (type === "fm") {
+          // Warm bell / Rhodes FM synth
+          activeSynth = new Tone.PolySynth(Tone.FMSynth, {
+            maxPolyphony: 6,
+            harmonicity: 2,
+            modulationIndex: 3,
+            oscillator: { type: "sine" },
+            envelope: { attack: 0.02, decay: 0.6, sustain: 0.15, release: 0.8 },
+            modulation: { type: "sine" },
+            modulationEnvelope: { attack: 0.02, decay: 0.3, sustain: 0.1, release: 0.5 }
+          }).toDestination();
+          activeSynth.volume.value = -10;
+        }
+      } catch (e) {
+        console.error("Error creating Tone.PolySynth, fallback to basic Synth:", e);
+        activeSynth = new Tone.PolySynth(Tone.Synth).toDestination();
+        activeSynth.volume.value = -8;
+      }
+
+      return activeSynth;
+    }
+
+    // Initialize OpenSheetMusicDisplay
+    function initOSMD() {
+      if (typeof opensheetmusicdisplay === "undefined" || !opensheetmusicdisplay.OpenSheetMusicDisplay) {
+        console.error("OpenSheetMusicDisplay library is not loaded.");
+        return null;
+      }
+      if (!osmdInstance) {
+        osmdInstance = new opensheetmusicdisplay.OpenSheetMusicDisplay("osmd-container", {
+          autoResize: true,
+          drawTitle: true,
+          drawSubtitle: true,
+          drawComposer: true,
+          drawCredits: true,
+          drawPartNames: true,
+          followCursor: true,
+          backend: "svg",
+          drawingParameters: "default", // or "compacttight"
+          fillEmptyMeasuresWithWholeRests: true,
+        });
+      }
+      return osmdInstance;
+    }
+
+    // Render MusicXML string in OpenSheetMusicDisplay
+    async function renderScore(xmlString, title) {
+      const osmd = initOSMD();
+      if (!osmd) {
+        status.className = "error";
+        status.textContent = "Error: OpenSheetMusicDisplay no pudo inicializarse.";
+        return;
+      }
+
+      // Hide placeholder
+      if (osmdPlaceholder) {
+        osmdPlaceholder.style.display = "none";
+      }
+
+      scoreTitleText.textContent = title ? `Pentagrama: ${title}` : "Pentagrama Renderizado (OSMD)";
+      status.className = "";
+      status.textContent = "Renderizando pentagrama en OpenSheetMusicDisplay...";
+
+      try {
+        // Sanitize xml string: trim leading whitespace, BOM, or markdown formatting
+        let cleanXml = (xmlString || "").trim();
+        // Remove UTF-8 BOM if present
+        if (cleanXml.charCodeAt(0) === 0xFEFF) {
+          cleanXml = cleanXml.slice(1).trim();
+        }
+        // Extract xml starting from <?xml or <score-partwise
+        const xmlStartIdx = cleanXml.search(/<(?:\?xml|score-partwise)/i);
+        if (xmlStartIdx > 0) {
+          cleanXml = cleanXml.slice(xmlStartIdx);
+        }
+
+        // Ensure XML declaration exists if starting with score-partwise
+        if (cleanXml.startsWith("<score-partwise") && !cleanXml.startsWith("<?xml")) {
+          cleanXml = '<?xml version="1.0" encoding="UTF-8"?>\n' + cleanXml;
+        }
+
+        await osmd.load(cleanXml);
+        osmd.zoom = currentZoom;
+        osmd.render();
+
+        // Enable Play & Stop buttons
+        if (playBtn) playBtn.disabled = false;
+        if (stopBtn) stopBtn.disabled = false;
+
+        status.className = "success";
+        status.textContent = "¡Pentagrama renderizado con éxito! Puedes pulsar 'Play' para reproducirlo con Tone.js.";
+      } catch (err) {
+        console.error("OSMD render error:", err);
+        status.className = "error";
+        status.textContent = "Error renderizando en OSMD: " + (err.message || err);
+      }
+    }
+
+    /**
+     * Stop any ongoing Tone.js playback and reset OSMD cursor
+     */
+    function stopPlayback() {
+      isPlaying = false;
+      playbackTimeouts.forEach(t => clearTimeout(t));
+      playbackTimeouts = [];
+
+      if (typeof Tone !== "undefined") {
+        try {
+          Tone.Transport.stop();
+          Tone.Transport.cancel();
+        } catch (_) {}
+      }
+
+      if (activeSynth) {
+        try {
+          activeSynth.releaseAll();
+        } catch (_) {}
+      }
+
+      if (playBtn) {
+        playBtn.disabled = false;
+        playBtn.innerHTML = `
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          <span>Play</span>
+        `;
+      }
+      if (stopBtn) {
+        stopBtn.disabled = true;
+      }
+
+      // Reset OSMD cursor
+      if (osmdInstance && osmdInstance.cursor) {
+        try {
+          osmdInstance.cursor.reset();
+        } catch (_) {}
+      }
+    }
+
+    /**
+     * Accurate MusicXML timeline parser.
+     * Computes the exact start time in seconds and duration for each note/chord across parts and measures.
+     */
+    function parseMusicXMLTimeline(xmlString, bpm = 100) {
+      if (!xmlString) return [];
+      const secondsPerQuarter = 60 / bpm;
+      const noteEvents = [];
+      const cursorStepPositions = []; // Measure & beat tracker for OSMD cursor synchronization
+
+      // Extract parts
+      const partBlocks = xmlString.split(/<part\s+id=/i).slice(1);
+      if (partBlocks.length === 0) return [];
+
+      partBlocks.forEach((rawPart, partIdx) => {
+        let divisions = 1;
+        const divMatch = rawPart.match(/<divisions>(\d+)<\/divisions>/i);
+        if (divMatch) divisions = parseFloat(divMatch[1]) || 1;
+
+        let partCurrentBeats = 0;
+        const measureRegex = /<measure[^>]*>([\s\S]*?)<\/measure>/gi;
+        let mMatch;
+        let measureIndex = 0;
+
+        while ((mMatch = measureRegex.exec(rawPart)) !== null) {
+          const mContent = mMatch[1];
+          const mDivMatch = mContent.match(/<divisions>(\d+)<\/divisions>/i);
+          if (mDivMatch) divisions = parseFloat(mDivMatch[1]) || divisions;
+
+          let measureBeats = 0;
+          let lastDurationBeats = 0;
+          const noteRegex = /<note[^>]*>([\s\S]*?)<\/note>/gi;
+          let nMatch;
+
+          while ((nMatch = noteRegex.exec(mContent)) !== null) {
+            const noteStr = nMatch[1];
+            const isChord = /<chord\s*\/>|<chord>/i.test(noteStr);
+            const isRest = /<rest\s*\/>|<rest>/i.test(noteStr);
+
+            const durMatch = noteStr.match(/<duration>(\d+)<\/duration>/i);
+            const durBeats = durMatch ? (parseFloat(durMatch[1]) / divisions) : 1;
+
+            if (isChord) {
+              // Chord note belongs to the same onset time as the previous note
+              measureBeats -= lastDurationBeats;
+            }
+
+            const startTimeBeats = partCurrentBeats + measureBeats;
+            const startTimeSeconds = startTimeBeats * secondsPerQuarter;
+            const durSeconds = Math.max(0.08, durBeats * secondsPerQuarter * 0.88);
+
+            if (!isRest) {
+              const stepMatch = noteStr.match(/<step>([A-G])<\/step>/i);
+              const altMatch = noteStr.match(/<alter>([-\d.]+)<\/alter>/i);
+              const octMatch = noteStr.match(/<octave>(\d+)<\/octave>/i);
+
+              if (stepMatch && octMatch) {
+                const step = stepMatch[1].toUpperCase();
+                const alter = altMatch ? parseFloat(altMatch[1]) : 0;
+                const octave = octMatch[1];
+
+                let acc = "";
+                if (alter === 1) acc = "#";
+                else if (alter === -1) acc = "b";
+                else if (alter === 2) acc = "##";
+                else if (alter === -2) acc = "bb";
+
+                const pitch = `${step}${acc}${octave}`;
+
+                noteEvents.push({
+                  pitch: pitch,
+                  timeSeconds: startTimeSeconds,
+                  durationSeconds: durSeconds,
+                  partIndex: partIdx
+                });
+              }
+            }
+
+            // Track unique musical steps on Part 0 (or primary melody) for OSMD cursor advancing
+            if (partIdx === 0 && !isChord) {
+              cursorStepPositions.push({
+                timeSeconds: startTimeSeconds,
+                durationSeconds: durSeconds
+              });
+            }
+
+            measureBeats += durBeats;
+            lastDurationBeats = durBeats;
+          }
+
+          partCurrentBeats += measureBeats;
+          measureIndex++;
+        }
+      });
+
+      // Sort chronological order
+      noteEvents.sort((a, b) => a.timeSeconds - b.timeSeconds);
+      cursorStepPositions.sort((a, b) => a.timeSeconds - b.timeSeconds);
+
+      return { noteEvents, cursorStepPositions };
+    }
+
+    /**
+     * Start playback with Tone.js and sync OSMD cursor smoothly
+     */
+    async function startPlayback() {
+      if (!lastXmlText) {
+        status.className = "error";
+        status.textContent = "Primero carga o sube una partitura para reproducirla.";
+        return;
+      }
+
+      try {
+        // Start Tone audio context on user click/interaction
+        await Tone.start();
+
+        stopPlayback();
+        isPlaying = true;
+
+        if (playBtn) {
+          playBtn.disabled = true;
+          playBtn.innerHTML = `
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            <span>Reproduciendo...</span>
+          `;
+        }
+        if (stopBtn) {
+          stopBtn.disabled = false;
+        }
+
+        const synth = getToneSynth(synthSelect ? synthSelect.value : "piano");
+        if (!synth) throw new Error("No se pudo inicializar el sintetizador de Tone.js.");
+
+        const bpm = parseInt(tempoInput ? tempoInput.value : 100, 10) || 100;
+        const { noteEvents, cursorStepPositions } = parseMusicXMLTimeline(lastXmlText, bpm);
+
+        if (!noteEvents || noteEvents.length === 0) {
+          throw new Error("No se detectaron notas musicales en la partitura para reproducir.");
+        }
+
+        // Prepare and show OSMD cursor
+        if (osmdInstance && osmdInstance.cursor) {
+          try {
+            osmdInstance.cursor.reset();
+            osmdInstance.cursor.show();
+            isCursorVisible = true;
+          } catch (_) {}
+        }
+
+        status.className = "success";
+        status.textContent = `Reproduciendo con Tone.js (${noteEvents.length} notas a ${bpm} BPM)...`;
+
+        const startLeadTime = Tone.now() + 0.08;
+
+        // Group notes that sound at the same exact timestamp (chords/polyphony) to avoid synth voice overload
+        const chordGroups = new Map();
+        noteEvents.forEach(ev => {
+          const key = Math.round(ev.timeSeconds * 1000) / 1000;
+          if (!chordGroups.has(key)) {
+            chordGroups.set(key, { timeSeconds: ev.timeSeconds, notes: [], durationSeconds: ev.durationSeconds });
+          }
+          const group = chordGroups.get(key);
+          if (!group.notes.includes(ev.pitch)) {
+            group.notes.push(ev.pitch);
+          }
+          group.durationSeconds = Math.max(group.durationSeconds, ev.durationSeconds);
+        });
+
+        // Trigger Tone.js notes cleanly along the timeline
+        chordGroups.forEach(group => {
+          const scheduleTime = startLeadTime + group.timeSeconds;
+          try {
+            synth.triggerAttackRelease(group.notes, group.durationSeconds, scheduleTime);
+          } catch (err) {
+            console.warn("Tone note trigger warning:", err);
+          }
+        });
+
+        // Advance OSMD visual cursor in sync with musical beats
+        cursorStepPositions.forEach((pos, idx) => {
+          const delayMs = Math.round(pos.timeSeconds * 1000);
+          const tId = setTimeout(() => {
+            if (!isPlaying) return;
+            if (osmdInstance && osmdInstance.cursor && idx > 0) {
+              try {
+                osmdInstance.cursor.next();
+              } catch (_) {}
+            }
+          }, delayMs);
+          playbackTimeouts.push(tId);
+        });
+
+        // Find end time
+        let maxTimeSeconds = 0;
+        noteEvents.forEach(ev => {
+          const endTime = ev.timeSeconds + ev.durationSeconds;
+          if (endTime > maxTimeSeconds) maxTimeSeconds = endTime;
+        });
+
+        const totalDurationMs = Math.round(maxTimeSeconds * 1000) + 400;
+        const finishTimeout = setTimeout(() => {
+          if (!isPlaying) return;
+          stopPlayback();
+          status.className = "success";
+          status.textContent = "Reproducción de Tone.js completada.";
+        }, totalDurationMs);
+        playbackTimeouts.push(finishTimeout);
+
+      } catch (err) {
+        console.error("Tone.js playback error:", err);
+        status.className = "error";
+        status.textContent = "Error en reproducción de Tone.js: " + (err.message || err);
+        stopPlayback();
+      }
+    }
+
+    // Playback Listeners
+    if (playBtn) {
+      playBtn.addEventListener("click", () => {
+        startPlayback();
+      });
+    }
+
+    if (stopBtn) {
+      stopBtn.addEventListener("click", () => {
+        stopPlayback();
+        status.className = "";
+        status.textContent = "Reproducción detenida.";
+      });
+    }
+
+    if (synthSelect) {
+      synthSelect.addEventListener("change", () => {
+        getToneSynth(synthSelect.value);
+      });
+    }
+
+    // Zoom controls
+    zoomInBtn.addEventListener("click", () => {
+      if (osmdInstance) {
+        currentZoom = Math.min(2.0, currentZoom + 0.15);
+        osmdInstance.zoom = currentZoom;
+        osmdInstance.render();
+        zoomResetBtn.textContent = `${Math.round(currentZoom * 100)}%`;
+      }
+    });
+
+    zoomOutBtn.addEventListener("click", () => {
+      if (osmdInstance) {
+        currentZoom = Math.max(0.4, currentZoom - 0.15);
+        osmdInstance.zoom = currentZoom;
+        osmdInstance.render();
+        zoomResetBtn.textContent = `${Math.round(currentZoom * 100)}%`;
+      }
+    });
+
+    zoomResetBtn.addEventListener("click", () => {
+      if (osmdInstance) {
+        currentZoom = 0.9;
+        osmdInstance.zoom = currentZoom;
+        osmdInstance.render();
+        zoomResetBtn.textContent = "100%";
+      }
+    });
+
+    cursorBtn.addEventListener("click", () => {
+      if (!osmdInstance || !osmdInstance.cursor) return;
+      if (!isCursorVisible) {
+        osmdInstance.cursor.show();
+        isCursorVisible = true;
+        cursorBtn.textContent = "Cursor On (Siguiente)";
+        cursorBtn.style.background = "var(--accent-soft)";
+      } else {
+        osmdInstance.cursor.next();
+      }
+    });
+
+    function showSelectedFile(file) {
+      filename.textContent = file ? file.name : "Elige una imagen JPG / PNG o arrástrala aquí";
+      status.textContent = "";
+      status.className = "";
+
+      if (file && (file.type.startsWith("image/") || file.name.endsWith(".svg"))) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          imagePreview.src = e.target.result;
+          previewContainer.style.display = "block";
+        };
+        reader.readAsDataURL(file);
+      } else {
+        previewContainer.style.display = "none";
+      }
+    }
+
+    fileInput.addEventListener("change", () => {
+      showSelectedFile(fileInput.files[0]);
+    });
+
+    // Drag and drop handlers
+    ["dragenter", "dragover"].forEach(eventName => {
+      dropZone.addEventListener(eventName, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dropZone.classList.add("dragover");
+      });
+    });
+
+    ["dragleave", "drop"].forEach(eventName => {
+      dropZone.addEventListener(eventName, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dropZone.classList.remove("dragover");
+      });
+    });
+
+    dropZone.addEventListener("drop", (e) => {
+      const dt = e.dataTransfer;
+      const files = dt.files;
+      if (files && files.length > 0) {
+        fileInput.files = files;
+        showSelectedFile(files[0]);
+      }
+    });
+
+    // Sample button click: loads demo image and converts + displays
+    sampleBtn.addEventListener("click", async () => {
+      try {
+        sampleBtn.disabled = true;
+        status.textContent = "Cargando partitura de demostración (tabi)...";
+        status.className = "";
+
+        const response = await fetch("/api/sample");
+        if (!response.ok) throw new Error("No se pudo obtener la partitura muestra");
+        const blob = await response.blob();
+        const sampleFile = new File([blob], "tabi.svg", { type: "image/svg+xml" });
+
+        const dataTransfer = new DataTransfer();
+        dataTransfer.items.add(sampleFile);
+        fileInput.files = dataTransfer.files;
+        showSelectedFile(sampleFile);
+
+        // Auto trigger conversion
+        form.dispatchEvent(new Event("submit"));
+      } catch (err) {
+        status.className = "error";
+        status.textContent = "Error al cargar demo: " + err.message;
+        sampleBtn.disabled = false;
+      }
+    });
+
+    // Form submit: HOMR conversion -> MusicXML -> OpenSheetMusicDisplay live render
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const file = fileInput.files[0];
+      if (!file) return;
+
+      submit.disabled = true;
+      sampleBtn.disabled = true;
+      status.className = "";
+      status.textContent = "Analizando pentagramas, armadura, compás y notas musicales con HOMR...";
+
+      const body = new FormData();
+      body.append("file", file);
+
+      try {
+        const response = await fetch("/api/convert", { method: "POST", body });
+        if (!response.ok) {
+          let detail = "La conversión falló.";
+          try {
+            const data = await response.json();
+            if (data && data.detail) detail = data.detail;
+          } catch (_) {}
+          throw new Error(detail);
+        }
+
+        const xmlText = await response.text();
+        lastXmlText = xmlText;
+
+        const disposition = response.headers.get("Content-Disposition") || "";
+        let downloadName = "homr.musicxml";
+        const match = /filename="?([^"]+)"?/i.exec(disposition);
+        if (match) downloadName = match[1];
+        lastDownloadName = downloadName;
+
+        // Populate MusicXML inspect view
+        musicxmlCode.textContent = xmlText;
+
+        // Send directly to OpenSheetMusicDisplay!
+        await renderScore(xmlText, file.name);
+
+      } catch (error) {
+        status.className = "error";
+        status.textContent = error.message || "Error procesando partitura.";
+      } finally {
+        submit.disabled = false;
+        sampleBtn.disabled = false;
+      }
+    });
+
+    // Copy XML button
+    copyBtn.addEventListener("click", async () => {
+      if (!lastXmlText) return;
+      try {
+        await navigator.clipboard.writeText(lastXmlText);
+        copyBtn.textContent = "¡Copiado!";
+        setTimeout(() => { copyBtn.textContent = "Copiar XML"; }, 2000);
+      } catch (_) {
+        const ta = document.createElement("textarea");
+        ta.value = lastXmlText;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        ta.remove();
+        copyBtn.textContent = "¡Copiado!";
+        setTimeout(() => { copyBtn.textContent = "Copiar XML"; }, 2000);
+      }
+    });
+
+    // Download XML button
+    downloadBtn.addEventListener("click", () => {
+      if (!lastXmlText) return;
+      const blob = new Blob([lastXmlText], { type: "application/vnd.recordare.musicxml+xml" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = lastDownloadName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    });
+
+    // Automatically load OSMD on window load and prepare
+    window.addEventListener("DOMContentLoaded", () => {
+      initOSMD();
+    });
+  </script>
+</body>
+</html>
